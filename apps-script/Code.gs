@@ -1,9 +1,10 @@
 /**
  * 곁에 — Google Sheets 읽기 전용 공개 API
- * 설정: 프로젝트 설정 > 스크립트 속성 > SPREADSHEET_ID
+ * 원본 시트: DAH-외국인의료지원기관 찾기 (아래 SPREADSHEET_ID)
  * 배포: 웹 앱 / 실행 사용자: 나 / 액세스: 모든 사용자
  * 응답에 포함할 모든 셀은 공개 가능한 내용이어야 합니다.
  */
+const SPREADSHEET_ID = '1EmHCQAfs-sDlWph-YU-CDhXIIMGOM26E8xCMiXvIZYA';
 const SOURCE_SHEETS = {
   hospitals: '확인 완료',
   programs: [
@@ -15,9 +16,11 @@ const SOURCE_SHEETS = {
 // 기관 시트는 아래 허용 열만 읽습니다. 추가한 임의의 열은 API에 노출되지 않습니다.
 const PUBLIC_FIELDS = {
   id: ['연번', 'id'], province: ['시도', 'province'], name: ['기관명', 'name'], city: ['시군구/권역', 'city'], type: ['기관 유형', 'type'],
-  supportText: ['미등록외국인 진료지원 유무', 'support_text'], scope: ['지원범위', 'scope'], cost: ['진료 금액 및 횟수', 'cost'], procedure: ['필요서류 및 절차', 'procedure'],
-  note1: ['기타1', 'note1'], note2: ['기타2', 'note2'], note3: ['기타3', 'note3'],
-  status: ['status'], latitude: ['latitude'], longitude: ['longitude'], address: ['address'], phone: ['phone'], website: ['website'],
+  supportText: ['미등록외국인 진료지원 유무', '지원여부', 'support_text'],
+  scope: ['지원범위', 'scope'], cost: ['진료 금액 및 횟수', '지원 금액 및 횟수', 'cost'], procedure: ['필요서류 및 절차', 'procedure'],
+  contact: ['담당', 'contact'], phone: ['연락처', 'phone'],
+  note1: ['기타', '기타1', 'note1'], note2: ['기타2', 'note2'], note3: ['기타3', 'note3'],
+  status: ['status'], latitude: ['latitude'], longitude: ['longitude'], address: ['address'], website: ['website'],
   naverMapUrl: ['naver_map_url'], kakaoMapUrl: ['kakao_map_url'], lastVerified: ['last_verified'], display: ['display']
 };
 function doGet() {
@@ -31,11 +34,9 @@ function doGet() {
   return ContentService.createTextOutput(JSON.stringify(payload)).setMimeType(ContentService.MimeType.JSON);
 }
 function readPublicData() {
-  const id = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
-  if (!id) throw new Error('SPREADSHEET_ID 스크립트 속성을 설정하세요.');
-  const spreadsheet = SpreadsheetApp.openById(id);
+  const spreadsheet = SpreadsheetApp.openById(SPREADSHEET_ID);
   const sheet = spreadsheet.getSheetByName(SOURCE_SHEETS.hospitals);
-  if (!sheet) throw new Error('기관 시트를 찾을 수 없습니다.');
+  if (!sheet) throw new Error('기관 시트를 찾을 수 없습니다: ' + SOURCE_SHEETS.hospitals);
   const hospitals = parseHospitals(sheet.getDataRange().getDisplayValues());
   const warnings = [];
   const programs = SOURCE_SHEETS.programs.map(function (definition) {
@@ -69,7 +70,8 @@ function parseHospitals(rows) {
   const headers = rows[headerIndex].map(headerKey);
   const columns = {};
   Object.keys(PUBLIC_FIELDS).forEach(function (key) { columns[key] = headers.findIndex(function (header) { return PUBLIC_FIELDS[key].some(function (alias) { return headerKey(alias) === header; }); }); });
-  ['name', 'province', 'supportText', 'scope', 'cost', 'procedure'].forEach(function (key) { if (columns[key] < 0) throw new Error('필수 열 누락: ' + key); });
+  // 새 시트에는 지원여부(status) 열이 없을 수 있습니다. 기관명만 필수로 둡니다.
+  if (columns.name < 0) throw new Error('필수 열 누락: name');
   const usedIds = {};
   return rows.slice(headerIndex + 1).map(function (row, index) {
     function cell(key) { return columns[key] < 0 ? '' : textValue(row[columns[key]]); }
@@ -89,11 +91,12 @@ function parseHospitals(rows) {
       scope: cell('scope'),
       cost: cell('cost'),
       procedure: cell('procedure'),
+      contact: cell('contact'),
+      phone: cell('phone'),
       notes: [cell('note1'), cell('note2'), cell('note3')].filter(Boolean),
       latitude: numericCoordinate(cell('latitude'), 32, 39.5),
       longitude: numericCoordinate(cell('longitude'), 124, 132),
       address: cell('address'),
-      phone: cell('phone'),
       website: cell('website'),
       naverMapUrl: cell('naverMapUrl'),
       kakaoMapUrl: cell('kakaoMapUrl'),
@@ -120,17 +123,22 @@ function parseProgram(rows, definition) {
 /** 편집기에서 이 함수를 실행해 읽기 권한 승인 및 설정을 점검하세요. */
 function checkSetup() {
   const data = readPublicData();
-  const spreadsheetId = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
   const coordinatesCount = data.hospitals.filter(function (hospital) {
     return hospital.latitude != null && hospital.longitude != null;
   }).length;
+  const phoneCount = data.hospitals.filter(function (hospital) { return hospital.phone; }).length;
+  const contactCount = data.hospitals.filter(function (hospital) { return hospital.contact; }).length;
   console.log(JSON.stringify({
-    spreadsheetMatchesExpected: spreadsheetId === '1E6Nl_TbQlZiQX5tHO47yvRMrjmHg9Y_fojBfcvGu_Nk',
+    spreadsheetId: SPREADSHEET_ID,
     ok: data.ok,
     hospitalCount: data.hospitals.length,
     coordinatesCount: coordinatesCount,
+    phoneCount: phoneCount,
+    contactCount: contactCount,
     firstHospital: data.hospitals[0] && {
       name: data.hospitals[0].name,
+      status: data.hospitals[0].status,
+      phone: data.hospitals[0].phone,
       latitude: data.hospitals[0].latitude,
       longitude: data.hospitals[0].longitude
     },
@@ -140,11 +148,7 @@ function checkSetup() {
 }
 
 function updateHospitalCoordinatesForLeafletMap() {
-  const spreadsheetId = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
-  if (spreadsheetId !== '1E6Nl_TbQlZiQX5tHO47yvRMrjmHg9Y_fojBfcvGu_Nk') {
-    throw new Error('SPREADSHEET_ID script property does not point to the hospital spreadsheet.');
-  }
-  const spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+  const spreadsheet = SpreadsheetApp.openById(SPREADSHEET_ID);
   const sheets = spreadsheet.getSheets();
   const normalize = value => String(value || '').replace(/\s+/g, '').toLowerCase();
   const headersFor = sheet => sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 1)).getDisplayValues()[0];
