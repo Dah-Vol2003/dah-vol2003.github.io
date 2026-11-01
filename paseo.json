@@ -8,7 +8,7 @@
   "scripts": {
     "serve": {
       "type": "service",
-      "command": "python3 -m http.server \"${PASEO_PORT:-8080}\" --bind \"${HOST:-127.0.0.1}\" --directory .",
+      "command": "sh -c 'python3 -m http.server \"${PASEO_PORT:-8080}\" --bind \"${HOST:-127.0.0.1}\" --directory .'",
       "port": 8080
     },
     "check": {
