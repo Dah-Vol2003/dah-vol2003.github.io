@@ -42,7 +42,26 @@ const hospitalDetails = hospital => [
   detailRow('연락처', hospital.phone),
   detailRow('기타', hospital.other)
 ].join('');
-const popup = hospital => `<div class="popup"><h3>${escapeHtml(hospital.name)}</h3>${hospitalDetails(hospital)}</div>`;
+const popupMarkup = hospital => `<h3>${escapeHtml(hospital.name)}</h3>${hospitalDetails(hospital)}`;
+
+// 브라우저 자동번역 대응: 팝업을 클릭 시점이 아니라 로드 시점에 DOM에 만들어 둔다.
+// 번역기는 번역을 누른 시점의 DOM 텍스트를 바꾸므로, 미리 문서에 있어야 번역문이 팝업에 따라온다.
+// 네이버 InfoWindow는 넘긴 노드를 복제하지 않고 그대로 옮겨 쓰기 때문에 이동 후에도 번역문이 유지된다.
+const popupStage = document.createElement('div');
+popupStage.className = 'popup-stage';
+popupStage.setAttribute('aria-hidden', 'true');
+document.body.append(popupStage);
+const popupNodes = new WeakMap();
+
+function createPopupNode(hospital) {
+  const node = document.createElement('div');
+  node.className = 'popup';
+  node.lang = 'ko';
+  node.innerHTML = popupMarkup(hospital);
+  popupStage.append(node);
+  popupNodes.set(hospital, node);
+  return node;
+}
 
 function loadNaverMaps() {
   if (!window.NAVER_MAPS_KEY_ID) return Promise.reject(new Error('Naver Maps Client ID를 js/config.js에 설정해야 합니다.'));
@@ -85,6 +104,9 @@ function openInfoWindow(item) {
   state.markers.forEach(({ infoWindow }) => {
     if (infoWindow !== item.infoWindow) infoWindow.close();
   });
+  // 스테이징에 있던 노드를 그대로 넘긴다(복제 아님). 브라우저가 이미 번역한 텍스트가 그대로 따라온다.
+  const node = popupNodes.get(item.hospital);
+  if (node) item.infoWindow.setContent(node);
   const popupContent = item.infoWindow.getContentElement();
   popupContent.style.maxHeight = `${Math.floor(document.querySelector('#map').clientHeight * 0.45)}px`;
   popupContent.style.overflowY = 'auto';
@@ -97,7 +119,8 @@ function openHospitalDialog(hospital, trigger) {
   state.markers.forEach(({ infoWindow }) => infoWindow.close());
   dialogTrigger = trigger || (document.activeElement === document.body ? null : document.activeElement);
   hospitalDialogTitle.textContent = hospital.name || '-';
-  hospitalDialogContent.innerHTML = `<div class="popup">${hospitalDetails(hospital)}</div>`;
+  const template = popupNodes.get(hospital);
+  hospitalDialogContent.replaceChildren(template ? template.cloneNode(true) : createPopupNode(hospital).cloneNode(true));
   hospitalDialog.hidden = false;
   fitHospitalDialogTitle();
   hospitalDialogClose.focus();
@@ -178,6 +201,7 @@ Promise.all([loadNaverMaps(), loadHospitals()]).then(([, hospitals]) => {
   hospitals.forEach(hospital => {
     const coordinates = coordsFor(hospital);
     if (!coordinates) return;
+    createPopupNode(hospital); // 자동번역 대상이 되도록 로드 시점에 DOM에 미리 렌더
     const marker = new naver.maps.Marker({
       position: new naver.maps.LatLng(coordinates[0], coordinates[1]),
       map,
@@ -185,12 +209,17 @@ Promise.all([loadNaverMaps(), loadHospitals()]).then(([, hospitals]) => {
       icon: markerIcon(supportState(hospital))
     });
     const infoWindow = new naver.maps.InfoWindow({
-      content: popup(hospital),
+      content: '',
       maxWidth: 300,
       zIndex: 1000,
       borderWidth: 0,
       backgroundColor: 'transparent',
       disableAnchor: true
+    });
+    // 닫히면 노드를 스테이징으로 되돌려 문서에 남긴다(나중에 번역을 눌러도 대상이 되도록).
+    naver.maps.Event.addListener(infoWindow, 'close', () => {
+      const node = popupNodes.get(hospital);
+      if (node && !node.isConnected) popupStage.append(node);
     });
     const item = { marker, infoWindow, hospital };
     naver.maps.Event.addListener(marker, 'click', () => {
