@@ -30,7 +30,18 @@ const coordsFor = hospital => {
   if (latitude < 33 || latitude > 39 || longitude < 124 || longitude > 132) return null;
   return [latitude, longitude];
 };
-const hospitalDetails = hospital => `<p><strong>지역</strong> ${escapeHtml(hospital.region)}</p><p class="support ${supportState(hospital)}">● ${supportLabel(hospital)}</p><p><strong>유형</strong> ${escapeHtml(hospital.type)}</p><p><strong>지원 범위</strong><br>${escapeHtml(hospital.support_range)}</p><p><strong>진료 금액</strong><br>${escapeHtml(hospital.amount)}</p><p><strong>필요 서류</strong><br>${escapeHtml(hospital.docs)}</p>`;
+const detailRow = (label, value) => value ? `<p><strong>${label}</strong><br>${escapeHtml(value)}</p>` : '';
+const hospitalDetails = hospital => [
+  `<p><strong>지역</strong> ${escapeHtml(hospital.region)}</p>`,
+  `<p class="support ${supportState(hospital)}">● ${supportLabel(hospital)}</p>`,
+  detailRow('유형', hospital.type),
+  detailRow('지원 범위', hospital.support_range),
+  detailRow('진료 금액', hospital.amount),
+  detailRow('필요 서류', hospital.docs),
+  detailRow('담당', hospital.contact),
+  detailRow('연락처', hospital.phone),
+  detailRow('기타', hospital.other)
+].join('');
 const popup = hospital => `<div class="popup"><h3>${escapeHtml(hospital.name)}</h3>${hospitalDetails(hospital)}</div>`;
 
 function loadNaverMaps() {
