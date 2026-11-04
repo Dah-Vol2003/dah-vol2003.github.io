@@ -1,4 +1,4 @@
-const state = { hospitals: [], markers: [], filter: 'all', query: '' };
+const state = { hospitals: [], markers: [], province: 'all', city: 'all', query: '' };
 let map;
 const mobileViewport = window.matchMedia('(max-width: 800px)');
 const hospitalDialog = document.querySelector('#hospital-dialog');
@@ -8,16 +8,8 @@ const hospitalDialogClose = document.querySelector('.hospital-dialog-close');
 let dialogTrigger;
 
 const escapeHtml = value => String(value || '-').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[char]));
-const supportState = hospital => {
-  const value = String(hospital.support || '').toLowerCase();
-  if (['yes', '1', 'o', 'available'].includes(value)) return 'yes';
-  if (['no', '0', 'x', 'unavailable'].includes(value)) return 'no';
-  return 'unknown';
-};
-const isSupported = hospital => supportState(hospital) === 'yes';
-const supportLabel = hospital => ({ yes: '지원 가능', no: '지원 불가', unknown: '확인 필요' }[supportState(hospital)]);
-const markerIcon = status => ({
-  content: `<span class="map-marker ${status}"></span>`,
+const markerIcon = () => ({
+  content: `<span class="map-marker"></span>`,
   size: new naver.maps.Size(16, 16),
   anchor: new naver.maps.Point(8, 8)
 });
@@ -30,14 +22,17 @@ const coordsFor = hospital => {
   if (latitude < 33 || latitude > 39 || longitude < 124 || longitude > 132) return null;
   return [latitude, longitude];
 };
-const detailRow = (label, value) => value ? `<p><strong>${label}</strong><br>${escapeHtml(value)}</p>` : '';
+const detailLines = value => String(value || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+const detailRow = (label, value) => {
+  const lines = detailLines(value);
+  return lines.length ? `<div class="detail"><strong>${label}</strong><ul class="detail-lines">${lines.map(line => `<li>${escapeHtml(line)}</li>`).join('')}</ul></div>` : '';
+};
 const hospitalDetails = hospital => [
-  `<p><strong>지역</strong> ${escapeHtml(hospital.region)}</p>`,
-  `<p class="support ${supportState(hospital)}">● ${supportLabel(hospital)}</p>`,
+  detailRow('지역', hospital.region),
   detailRow('유형', hospital.type),
   detailRow('지원 범위', hospital.support_range),
-  detailRow('진료 금액', hospital.amount),
-  detailRow('필요 서류', hospital.docs),
+  detailRow('지원 금액 및 횟수', hospital.amount),
+  detailRow('필요 서류 및 절차', hospital.docs),
   detailRow('담당', hospital.contact),
   detailRow('연락처', hospital.phone),
   detailRow('기타', hospital.other)
@@ -151,32 +146,51 @@ async function loadHospitals() {
   const records = Array.isArray(payload) ? payload : payload.hospitals;
   if (!Array.isArray(records)) throw new Error('Apps Script 응답 형식을 확인하세요.');
 
-  return records.map(record => {
-    const status = record.status === 'available' ? 'Yes' : record.status === 'unavailable' ? 'No' : record.status === 'unknown' ? 'Unknown' : record.support;
-    return {
-      ...record,
-      region: record.region || [record.province, record.city].filter(Boolean).join(' / '),
-      support: status,
-      support_range: record.support_range || record.scope || '',
-      amount: record.amount || record.cost || '',
-      docs: record.docs || record.procedure || '',
-      other: Array.isArray(record.other) ? record.other.join('\n') : Array.isArray(record.notes) ? record.notes.join('\n') : record.other || ''
-    };
-  });
+  return records.map(record => ({
+    ...record,
+    region: record.region || [record.province, record.city].filter(Boolean).join(' / '),
+    support_range: record.support_range || record.scope || '',
+    amount: record.amount || record.cost || '',
+    docs: record.docs || record.procedure || '',
+    other: Array.isArray(record.other) ? record.other.join('\n') : Array.isArray(record.notes) ? record.notes.join('\n') : record.other || ''
+  }));
+}
+
+const provinceSelect = document.querySelector('#province-select');
+const citySelect = document.querySelector('#city-select');
+const sortedUnique = values => [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
+const optionMarkup = (value, label) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`;
+const syncQuery = () => { state.query = document.querySelector('#search').value; };
+
+function setCityOptions(province, selected = 'all') {
+  const cities = sortedUnique(state.hospitals.filter(hospital => province === 'all' || hospital.province === province).map(hospital => hospital.city));
+  citySelect.innerHTML = [optionMarkup('all', '전체'), ...cities.map(city => optionMarkup(city, city))].join('');
+  citySelect.value = cities.includes(selected) ? selected : 'all';
+  state.city = citySelect.value;
+}
+
+function setupRegionFilters() {
+  const provinces = sortedUnique(state.hospitals.map(hospital => hospital.province));
+  provinceSelect.innerHTML = [optionMarkup('all', '전체'), ...provinces.map(province => optionMarkup(province, province))].join('');
+  provinceSelect.value = 'all';
+  state.province = 'all';
+  setCityOptions('all', 'all');
 }
 
 function render() {
+  const query = state.query.trim().toLowerCase();
   const filtered = state.hospitals.filter(hospital => {
-    const matchesFilter = state.filter === 'all' || supportState(hospital) === state.filter;
-    const haystack = `${hospital.name} ${hospital.region} ${hospital.type}`.toLowerCase();
-    return matchesFilter && haystack.includes(state.query.toLowerCase());
+    const matchesProvince = state.province === 'all' || hospital.province === state.province;
+    const matchesCity = state.city === 'all' || hospital.city === state.city;
+    const matchesQuery = !query || String(hospital.name || '').toLowerCase().includes(query);
+    return matchesProvince && matchesCity && matchesQuery;
   });
   document.querySelector('#results').textContent = `${filtered.length}개 기관이 검색되었습니다.`;
   const list = document.querySelector('#hospital-list');
   list.innerHTML = filtered.length ? filtered.map(h => {
     const hasCoordinates = Boolean(coordsFor(h));
     const unavailable = !hasCoordinates && !mobileViewport.matches;
-    return `<li><button class="hospital" data-id="${state.hospitals.indexOf(h)}" ${unavailable ? 'disabled title="좌표 정보가 등록되지 않았습니다."' : ''}><span class="hospital-name">${escapeHtml(h.name)}<span class="badge ${supportState(h)}">${supportLabel(h)}</span></span><span class="hospital-meta">${escapeHtml(h.region)} · ${escapeHtml(h.type)}</span></button></li>`;
+    return `<li><button class="hospital" data-id="${state.hospitals.indexOf(h)}" ${unavailable ? 'disabled title="좌표 정보가 등록되지 않았습니다."' : ''}><span class="hospital-name">${escapeHtml(h.name)}</span><span class="hospital-meta">${escapeHtml(h.region)} · ${escapeHtml(h.type)}</span></button></li>`;
   }).join('') : '<li class="empty">검색 결과가 없습니다.</li>';
   state.markers.forEach(item => {
     const visible = filtered.includes(item.hospital);
@@ -197,7 +211,7 @@ Promise.all([loadNaverMaps(), loadHospitals()]).then(([, hospitals]) => {
   });
   state.hospitals = hospitals;
   document.querySelector('#total-count').textContent = hospitals.length;
-  document.querySelector('#yes-count').textContent = hospitals.filter(isSupported).length;
+  setupRegionFilters();
   hospitals.forEach(hospital => {
     const coordinates = coordsFor(hospital);
     if (!coordinates) return;
@@ -206,7 +220,7 @@ Promise.all([loadNaverMaps(), loadHospitals()]).then(([, hospitals]) => {
       position: new naver.maps.LatLng(coordinates[0], coordinates[1]),
       map,
       title: hospital.name,
-      icon: markerIcon(supportState(hospital))
+      icon: markerIcon()
     });
     const infoWindow = new naver.maps.InfoWindow({
       content: '',
@@ -236,7 +250,8 @@ Promise.all([loadNaverMaps(), loadHospitals()]).then(([, hospitals]) => {
 }).catch(error => { document.querySelector('#results').textContent = error.message; });
 
 document.querySelector('#search').addEventListener('input', event => { state.query = event.target.value; render(); });
-document.querySelectorAll('.filter').forEach(button => button.addEventListener('click', () => { document.querySelectorAll('.filter').forEach(item => item.classList.remove('active')); button.classList.add('active'); state.filter = button.dataset.filter; render(); }));
+provinceSelect.addEventListener('change', () => { state.province = provinceSelect.value; setCityOptions(state.province); syncQuery(); render(); });
+citySelect.addEventListener('change', () => { state.city = citySelect.value; syncQuery(); render(); });
 document.querySelector('#hospital-list').addEventListener('click', event => {
   const button = event.target.closest('[data-id]');
   if (!button || button.disabled) return;
