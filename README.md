@@ -1,7 +1,7 @@
 # 외국인 진료소 찾기 — 행동하는의사회 (DAH)
 
 한국의 외국인 진료 지원 가능 기관을 지도에서 찾는 정적 사이트.
-https://wonwooky.github.io/
+https://dah-vol2003.github.io/
 
 ## 구조
 
