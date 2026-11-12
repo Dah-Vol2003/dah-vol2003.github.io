@@ -35,7 +35,7 @@ The Apps Script endpoint returns JSON with CORS enabled. The page maps its `{ ok
 
 ## Naver Maps
 
-The browser loads the Naver Maps Web SDK with `NAVER_MAPS_KEY_ID` from `js/config.js`. This client key is visible in the static site, so restrict its Web Service URLs in Naver Cloud Platform to `http://localhost` and `https://wonwooky.github.io`. Do not put a Client Secret in frontend code.
+The browser loads the Naver Maps Web SDK with `NAVER_MAPS_KEY_ID` from `js/config.js`. This client key is visible in the static site, so restrict its Web Service URLs in Naver Cloud Platform to `http://localhost` and `https://dah-vol2003.github.io`. Do not put a Client Secret in frontend code.
 
 ## 개발
 
