@@ -23,9 +23,24 @@ const coordsFor = hospital => {
   return [latitude, longitude];
 };
 const detailLines = value => String(value || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
-const detailRow = (label, value) => {
+const linkifyHttps = line => line.split(/(https:\/\/[^\s<>"'\[\]{}]+)/gi).map((part, index) => {
+  if (!part) return '';
+  if (index % 2 === 0) return escapeHtml(part);
+  let url = part.replace(/[.,!?;:，。！？、]+$/, '');
+  while (url.endsWith(')') && url.split(')').length > url.split('(').length) url = url.slice(0, -1);
+  url = url.replace(/[.,!?;:，。！？、]+$/, '');
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:' || !parsed.hostname) return escapeHtml(part);
+  } catch {
+    return escapeHtml(part);
+  }
+  const suffix = part.slice(url.length);
+  return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>${suffix ? escapeHtml(suffix) : ''}`;
+}).join('');
+const detailRow = (label, value, renderLine = escapeHtml) => {
   const lines = detailLines(value);
-  return lines.length ? `<div class="detail"><strong>${label}</strong><ul class="detail-lines">${lines.map(line => `<li>${escapeHtml(line)}</li>`).join('')}</ul></div>` : '';
+  return lines.length ? `<div class="detail"><strong>${label}</strong><ul class="detail-lines">${lines.map(line => `<li>${renderLine(line)}</li>`).join('')}</ul></div>` : '';
 };
 const hospitalDetails = hospital => [
   detailRow('지역', hospital.region),
@@ -35,7 +50,7 @@ const hospitalDetails = hospital => [
   detailRow('필요 서류 및 절차', hospital.docs),
   detailRow('담당', hospital.contact),
   detailRow('연락처', hospital.phone),
-  detailRow('기타', hospital.other)
+  detailRow('기타', hospital.other, linkifyHttps)
 ].join('');
 const popupMarkup = hospital => `<h3>${escapeHtml(hospital.name)}</h3>${hospitalDetails(hospital)}`;
 
@@ -270,8 +285,16 @@ hospitalDialog.addEventListener('click', event => {
 hospitalDialog.addEventListener('keydown', event => {
   if (event.key === 'Escape') closeHospitalDialog();
   else if (event.key === 'Tab') {
-    event.preventDefault();
-    hospitalDialogClose.focus();
+    const focusable = [hospitalDialogClose, ...hospitalDialogContent.querySelectorAll('a[href]')];
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   }
 });
 mobileViewport.addEventListener('change', () => {
